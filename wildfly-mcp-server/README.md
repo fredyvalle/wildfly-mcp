@@ -123,8 +123,10 @@ When read-only mode is enabled:
 * The following tools are not allowed and fail with an explicit message: `deployWildFlyApplication`, `undeployWildFlyApplication`, 
 `shutdownServer`, `enableWildFlyLoggingCategory`, `removeWildFlyLoggingCategory`.
 
-* The `invokeWildFlyCLIOperation` tool only allows read operations (operation names starting with `read-`, plus `query`, 
-`whoami`, `validate-address`, `validate-operation` and `list-snapshots`). Any other operation, including `composite`, is rejected.
+* The `invokeWildFlyCLIOperation` tool only allows operations that the WildFly management model itself declares as read-only. 
+Before running an operation, the server is queried with `read-operation-description` and the operation is rejected unless its 
+`read-only` flag is `true`. This uses the server's own metadata as the source of truth rather than matching on the operation name, 
+so an operation that looks read-only but is implemented as a write operation is still rejected (composite operations are rejected too).
 
 * All other read-only tools remain fully available.
 

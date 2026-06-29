@@ -100,16 +100,6 @@ public class WildFlyMCPServer {
     static final String READ_ONLY_ENV = "WILDFLY_MCP_SERVER_READONLY";
     static final String READ_ONLY_PROPERTY = "org.wildfly.readonly";
 
-    // Operations allowed by invokeWildFlyCLIOperation when read-only mode is
-    // enabled. Any operation whose name starts with "read-" is allowed in
-    // addition to this set.
-    private static final Set<String> READ_ONLY_ALLOWED_OPERATIONS = Set.of(
-            "query",
-            "whoami",
-            "validate-address",
-            "validate-operation",
-            "list-snapshots");
-
     static boolean isReadOnly() {
         String value = System.getenv(READ_ONLY_ENV);
         if (value == null) {
@@ -118,22 +108,31 @@ public class WildFlyMCPServer {
         return Boolean.parseBoolean(value);
     }
 
-    // Returns true if the provided CLI operation is a read-only operation that
-    // is safe to run when read-only mode is enabled. Composite operations are
-    // rejected because their nested steps cannot be validated here.
-    static boolean isReadOnlyOperation(String operation) {
+    // Returns true only if the WildFly management model declares the provided
+    // CLI operation as read-only. The server's own metadata (the "read-only"
+    // flag returned by read-operation-description) is used as the source of
+    // truth rather than matching on the operation name, so an operation that is
+    // semantically read-only but implemented as a write operation is correctly
+    // rejected. Composite operations are not declared read-only and are
+    // therefore rejected as well.
+    boolean isReadOnlyOperation(Server server, User user, CommandContext ctx, String operation) throws Exception {
         if (operation == null) {
             return false;
         }
-        String op = operation.trim();
-        int paren = op.indexOf('(');
-        String head = (paren >= 0 ? op.substring(0, paren) : op).trim();
+        int paren = operation.indexOf('(');
+        String head = (paren >= 0 ? operation.substring(0, paren) : operation).trim();
         int colon = head.lastIndexOf(':');
-        String operationName = (colon >= 0 ? head.substring(colon + 1) : head).trim().toLowerCase();
+        if (colon < 0) {
+            return false;
+        }
+        String address = head.substring(0, colon).trim();
+        String operationName = head.substring(colon + 1).trim();
         if (operationName.isEmpty()) {
             return false;
         }
-        return operationName.startsWith("read-") || READ_ONLY_ALLOWED_OPERATIONS.contains(operationName);
+        ModelNode descRequest = ctx.buildRequest(address + ":read-operation-description(name=" + operationName + ")");
+        ModelNode result = wildflyClient.call(server, user, descRequest).get("result");
+        return result.hasDefined("read-only") && result.get("read-only").asBoolean(false);
     }
 
     private ToolResponse readOnlyError(String action) {
@@ -257,12 +256,12 @@ public class WildFlyMCPServer {
             @ToolArg(name = "port", required = false) String port,
             String operation) {
         Server server = new Server(host, port);
-        if (isReadOnly() && !isReadOnlyOperation(operation)) {
-            return readOnlyError("invoking the non read-only operation '" + operation + "'");
-        }
         try {
             User user = new User();
             CommandContext ctx = CommandContextFactory.getInstance().newCommandContext();
+            if (isReadOnly() && !isReadOnlyOperation(server, user, ctx, operation)) {
+                return readOnlyError("invoking the non read-only operation '" + operation + "'");
+            }
             ModelNode mn = ctx.buildRequest(operation);
             String value = wildflyClient.call(server, user, mn).toJSONString(false);
             return buildResponse(value);

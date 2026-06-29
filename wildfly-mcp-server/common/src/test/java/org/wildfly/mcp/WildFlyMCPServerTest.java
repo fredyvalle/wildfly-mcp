@@ -576,27 +576,10 @@ public class WildFlyMCPServerTest {
     }
 
     @Test
-    public void testIsReadOnlyOperation() {
-        // Read operations are allowed.
-        assertTrue(WildFlyMCPServer.isReadOnlyOperation(":whoami"));
-        assertTrue(WildFlyMCPServer.isReadOnlyOperation(":read-resource(recursive=true)"));
-        assertTrue(WildFlyMCPServer.isReadOnlyOperation("/subsystem=undertow:read-attribute(name=default-server)"));
-        assertTrue(WildFlyMCPServer.isReadOnlyOperation("/deployment=foo.war:read-children-names(child-type=subsystem)"));
-        assertTrue(WildFlyMCPServer.isReadOnlyOperation(":query(select=[name])"));
-
-        // Write/destructive operations are rejected.
-        assertFalse(WildFlyMCPServer.isReadOnlyOperation(":shutdown"));
-        assertFalse(WildFlyMCPServer.isReadOnlyOperation(":reload"));
-        assertFalse(WildFlyMCPServer.isReadOnlyOperation("/subsystem=undertow:write-attribute(name=foo,value=bar)"));
-        assertFalse(WildFlyMCPServer.isReadOnlyOperation("/system-property=foo:add(value=bar)"));
-        assertFalse(WildFlyMCPServer.isReadOnlyOperation(":composite(steps=[])"));
-        assertFalse(WildFlyMCPServer.isReadOnlyOperation(null));
-    }
-
-    @Test
     public void testReadOnlyModeAllowsReadCLIOperation() throws Exception {
+        // The management model declares the operation as read-only.
         ModelNode response = new ModelNode();
-        response.get("result").set("success");
+        response.get("result").get("read-only").set(true);
         when(controllerClientMock.call(any(Server.class), any(User.class), any(ModelNode.class)))
                 .thenReturn(response);
 
@@ -611,9 +594,33 @@ public class WildFlyMCPServerTest {
 
     @Test
     public void testReadOnlyModeBlocksWriteCLIOperation() throws Exception {
+        // The management model declares the operation as NOT read-only.
+        ModelNode response = new ModelNode();
+        response.get("result").get("read-only").set(false);
+        when(controllerClientMock.call(any(Server.class), any(User.class), any(ModelNode.class)))
+                .thenReturn(response);
+
         System.setProperty(WildFlyMCPServer.READ_ONLY_PROPERTY, "true");
         try {
             ToolResponse toolResponse = server.invokeWildFlyCLIOperation("localhost", "9990", ":shutdown");
+            assertTrue(toolResponse.isError());
+        } finally {
+            System.clearProperty(WildFlyMCPServer.READ_ONLY_PROPERTY);
+        }
+    }
+
+    @Test
+    public void testReadOnlyModeRejectsWriteOperationWithReadOnlyLookingName() throws Exception {
+        // The operation name looks read-only, but the management model declares
+        // it as a write operation. The server metadata is the source of truth.
+        ModelNode response = new ModelNode();
+        response.get("result").get("read-only").set(false);
+        when(controllerClientMock.call(any(Server.class), any(User.class), any(ModelNode.class)))
+                .thenReturn(response);
+
+        System.setProperty(WildFlyMCPServer.READ_ONLY_PROPERTY, "true");
+        try {
+            ToolResponse toolResponse = server.invokeWildFlyCLIOperation("localhost", "9990", "/subsystem=foo:read-something");
             assertTrue(toolResponse.isError());
         } finally {
             System.clearProperty(WildFlyMCPServer.READ_ONLY_PROPERTY);
